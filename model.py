@@ -107,7 +107,7 @@ class LLourney(nn.Module):
 
     def forward(self, latent_image: Tensor, input_ids: Tensor, timestep: Tensor, text_pad_mask: Optional[Tensor] = None) -> Tensor:
         # latent_image # (B, LC, L, L) - latent image from VAE
-        # input_ids (B, T): str
+        # input_ids (B, T): [0, VOCAB_SIZE)
         # timestep (B): [0, MAX_DIFFUSE_TIMESTEP)
         # text_pad_mask (B, T)
         B, _, latent_img_dim, _ = latent_image.shape
@@ -130,10 +130,9 @@ class LLourney(nn.Module):
         timestep_emb = self.timestep_embed(timestep).unsqueeze(dim=1)  # (B, 1, C)
         # print("timestep_emb:", timestep_emb.shape)
 
-        # Embedding to encode the text to condition on
+        # Embedding to encode the text to condition on. NOTE: Text is already tokenized
         # text_idx = torch.tensor(self.llama_tokenizer(input_text).input_ids, dtype=torch.long, device=DEVICE)  # (B, T): [0, VOCAB_SIZE)
-        text_idx = torch.tensor(input_ids, dtype=torch.long, device=DEVICE)  # (B, T): [0, VOCAB_SIZE)
-        text_embs = self.llama_token_embs(text_idx)  # (B, T, C)
+        text_embs = self.llama_token_embs(input_ids.long())  # (B, T, C)
         # print("text_embs:", text_embs.shape)
 
         # Concatenate all embeddings together along sequence dimension in a unified embedding for Llama
