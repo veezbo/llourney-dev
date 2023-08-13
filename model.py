@@ -88,7 +88,7 @@ class LLourney(nn.Module):
     @torch.no_grad()
     def encode_image(self, img: Tensor) -> Tensor:
         if self.train:
-            latent_image = self.vae.encode(img).latent_dist.sample()
+            latent_image = self.vae.config.scaling_factor * self.vae.encode(img).latent_dist.sample()
         else:
             latent_image = self.vae.encode(img).latent_dist.mean
         return latent_image
