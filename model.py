@@ -18,10 +18,10 @@ from datasets import load_dataset
 from typing import Optional
 
 # Input image dimension
-IMG_DIM = 128
+IMG_DIM = 256
 
 # Patch dimension and latent quantities
-PATCH_DIM = 16
+PATCH_DIM = 2
 LATENT_DIM = IMG_DIM // 8  # TODO(3): Set this dynamically from VAE config
 LATENT_CHANNELS = 4
 NUM_PATCHES = (LATENT_DIM // PATCH_DIM) * (LATENT_DIM // PATCH_DIM)
@@ -30,10 +30,10 @@ NUM_PATCHES = (LATENT_DIM // PATCH_DIM) * (LATENT_DIM // PATCH_DIM)
 BATCH_SIZE = 2
 
 # Hidden embedding dimension
-EMBEDDING_DIM = 768  # NOTE: Make sure EMBEDDING_DIM has the same dimensionality as C (output of this Llama checkpoint)
+EMBEDDING_DIM = 1280  # NOTE: Make sure EMBEDDING_DIM has the same dimensionality as C (output of this Llama checkpoint)
 
 STABILITY_MODEL = 'runwayml/stable-diffusion-v1-5'
-MODEL = 'gpt2'
+MODEL = 'gpt2-large'
 TOKENIZER = MODEL
 # LLAMA_MODEL = 'abhinavkulkarni/meta-llama-Llama-2-7b-chat-hf-w4-g128-awq'
 # LLAMA_TOKENIZER = LLAMA_MODEL
@@ -49,15 +49,6 @@ class LLourney(nn.Module):
         self.vae = AutoencoderKL.from_pretrained(STABILITY_MODEL, subfolder='vae')
         # We use the pre-trained VAE from Stable Diffusion with frozen weights
         self.vae.requires_grad_(False)
-
-        # self.vae_img_in = PatchEmbed(
-        #     height=sample_size,
-        #     width=sample_size,
-        #     patch_size=patch_size,
-        #     in_channels=in_channels,
-        #     embed_dim=self.inner_dim,
-        #     use_pos_embed=use_patch_pos_embed,
-        # )
 
         self.vae_img_patch_embed = PatchEmbed(
             height=LATENT_DIM,
