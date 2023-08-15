@@ -3,3 +3,4 @@ pred_img*
 .vscode
 __pycache__
 data
+losses
