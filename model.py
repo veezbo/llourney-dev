@@ -14,30 +14,6 @@ from diffusers.pipelines.pipeline_utils import numpy_to_pil
 from transformers import AutoTokenizer, AutoModel
 
 
-# Input image dimension
-IMG_DIM = 128
-
-# Patch dimension and latent quantities
-PATCH_DIM = 16
-LATENT_DIM = IMG_DIM // 8  # TODO(3): Set this dynamically from VAE config
-LATENT_CHANNELS = 4
-NUM_PATCHES = (LATENT_DIM // PATCH_DIM) * (LATENT_DIM // PATCH_DIM)
-
-# Train Vars
-BATCH_SIZE = 2
-
-# Hidden embedding dimension
-EMBEDDING_DIM = 768  # NOTE: Make sure EMBEDDING_DIM has the same dimensionality as C (output of this Llama checkpoint)
-
-STABILITY_MODEL = 'runwayml/stable-diffusion-v1-5'
-MODEL = 'gpt2'
-TOKENIZER = MODEL
-# LLAMA_MODEL = 'abhinavkulkarni/meta-llama-Llama-2-7b-chat-hf-w4-g128-awq'
-# LLAMA_TOKENIZER = LLAMA_MODEL
-
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
 class LLourney(nn.Module):
     
     def __init__(
@@ -67,7 +43,8 @@ class LLourney(nn.Module):
         if self.llama_tokenizer.pad_token is None:
             print(f"Setting tokenizer pad_token to eos_token: {self.llama_tokenizer.eos_token}")
             self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
-        # Set padding_side explicitly (?)
+        # Set padding_side explicitly
+        # TODO(3): try padding_side = "left"
         self.llama_tokenizer.padding_side = "right"
 
         self.llama = AutoModel.from_pretrained(llm_model_id_or_path)
@@ -178,10 +155,7 @@ class LLourney(nn.Module):
 
         # Concatenate all embeddings together along sequence dimension in a unified embedding for Llama
         # Because Llama is purely causal, put the text and timestep embeddings before patches 
-        #   so it can attend to them when understanding the patches
-        # TODO(1): Likely need to pad the text to be a fixed length (i.e. a fixed portion of the concatenated embeddings)
-        # TODO(1): May need some padding here to ensure dim 1 is max sequence length and valid input to llama
-        # ^^ PENDING a test forward call
+        # so it can attend to them when understanding the patches
         transformer_emb = torch.cat([text_embs, timestep_emb, patch_embs], dim=1)  # (B, T+1+NP, C)
         # print("transformer_emb pre llama:", transformer_emb.shape)
 
@@ -190,20 +164,18 @@ class LLourney(nn.Module):
         transformer_emb = self.llama(inputs_embeds=transformer_emb, attention_mask=total_pad_mask).last_hidden_state  # (B, S, C)
         # print("transformer_emb post llama:", transformer_emb.shape)
 
-        # TODO(3): Use einops to maybe do the reshaping and shuffling in a single step while being a lot more obvious
-        # Blast out the patches. Also includes a linear layer
-        # NOTE: In order to undo the patching, we have a linear layer back to NUM_PATCHES and shuffle data to reform an image with same dim
-        # NOTE: Recover the latent image channels from hidden dimension
-        # Pluck out last NP tokens correspoding to patch embeddings
+        # Pluck out last self.num_patches tokens corresponding to patch embeddings and map the token embedding
+        # dimension from the transformer hidden dimension to the size of each latent patch volume
+        # (patch_dim * patch_dim * self.vae_latent_channels)
         projected_img_emb = self.transformer_img_proj(transformer_emb[:, -self.num_patches:, :])  # (S[B, :-NP, C]) @ (C, LC*L*L/NP) -> (B, NP, LC*L*L/NP)
         # print("projected_img_emb after projection:", projected_img_emb.shape)
         
-        # Pure reshaping to original image shape, no learnable parameters
-        # (B, NP, LC*L*L/NP) -> (B, sqrt[NP], sqrt[NP], L/sqrt[NP], L/sqrt[NP], LC) | B*LC*L^2 on both sides
-        # NOTE: NP = (LATENT_DIM // PATCH_DIM)^2
-        # projected_img_emb = projected_img_emb.reshape(
-        #     shape=(B, self.latent_dim // self.patch_dim, self.latent_dim // self.patch_dim, self.patch_dim, self.patch_dim, self.vae_latent_channels)
-        # )
+        # Reshape the final transformer hidden states back to a latent image
+        # We have a number of tokens corresponding to the number of patches (which is the number of patches
+        # in the height dim times the number of patches in the width dim), and each token embedding has dim
+        # corresponding to the size of each latent patch volume. Thus, we can pull out the latent channels and
+        # then combine the number of patches in each spatial dimension with the patch_dim to recover the original
+        # latent spatial resolution.
         denoised_latent_image = rearrange(
             projected_img_emb,
             'b (height_patches width_patches) (phd pwd c) -> b c (height_patches phd) (width_patches pwd)',
@@ -288,9 +260,10 @@ if __name__ == '__main__':
     #     up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D"],
     #     latent_channels=4,
     # )
+    # vae.save_pretrained("test_vae")
     test_model = LLourney(
         image_dim=64,
-        # vae_model_id_or_path="test_vae",
+        vae_model_id_or_path="test_vae",
         llm_model_id_or_path="hf-internal-testing/tiny-random-gpt2",
         llm_tokenizer_model_id_or_path="hf-internal-testing/tiny-random-gpt2",
     )
