@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Union
 
 import numpy as np
@@ -31,9 +32,10 @@ class LLourney(nn.Module):
         self.context_size = context_size
 
         self.vae = AutoencoderKL.from_pretrained(vae_model_id_or_path, subfolder='vae')
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_downsample_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_encoder_scaling_factor = self.vae.config.scaling_factor
         self.vae_latent_channels = self.vae.config.latent_channels
-        self.latent_dim = image_dim // self.vae_scale_factor
+        self.latent_dim = image_dim // self.vae_downsample_factor
 
         self.num_patches = (self.latent_dim // self.patch_dim) ** 2
 
@@ -102,11 +104,12 @@ class LLourney(nn.Module):
         else:
             latent_image = self.vae.encode(img).latent_dist.mean
         if scale_latents:
-            latent_image = latent_image * self.vae.config.scaling_factor
+            latent_image = latent_image * self.vae_encoder_scaling_factor
         return latent_image
     
     def decode_image_latents(self, denoised_latent_image: torch.FloatTensor, as_numpy: bool = True) -> np.ndarray:
-        denoised_latent_image = 1 / self.vae.config.scaling_factor * denoised_latent_image
+        # Descale denoised latents by vae_encoder_scaling_factor
+        denoised_latent_image = 1 / self.vae_encoder_scaling_factor * denoised_latent_image
         image = self.vae.decode(denoised_latent_image, return_dict=False)[0]
         image = (image / 2 + 0.5).clamp(0, 1)
         
@@ -228,7 +231,7 @@ def forward_pass_test(model: LLourney, input_str: str, batch_size: int = 2, devi
 
     # Prepare input tokens and attention mask (for padding)
     input_str_list = [input_str] * batch_size
-    input_ids, attention_mask = model.tokenize(input_str_list)
+    input_ids, pad_mask = model.tokenize(input_str_list)
 
     # Prepare timesteps
     timestep = torch.ones((batch_size,), device=device, dtype=torch.long)
@@ -237,7 +240,7 @@ def forward_pass_test(model: LLourney, input_str: str, batch_size: int = 2, devi
     latent_img = model.encode_image(img, scale_latents=True)
 
     # LLourney forward pass
-    denoised_latent_img = model(latent_img, input_ids, timestep, attention_mask)
+    denoised_latent_img = model(latent_img, input_ids, timestep, pad_mask)
 
     # Map denoised latents back to pixel space
     predicted_img = model.decode_image_latents(denoised_latent_img)
@@ -250,17 +253,19 @@ def forward_pass_test(model: LLourney, input_str: str, batch_size: int = 2, devi
 
 if __name__ == '__main__':
     input_str = "test string"
-    # Tested with random small AutoencoderKL initialized as follows:
-    # torch.manual_seed(0)
-    # vae = AutoencoderKL(
-    #     block_out_channels=[32, 64],
-    #     in_channels=3,
-    #     out_channels=3,
-    #     down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D"],
-    #     up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D"],
-    #     latent_channels=4,
-    # )
-    # vae.save_pretrained("test_vae")
+
+    if not os.path.isdir("test_vae"):
+        torch.manual_seed(0)
+        vae = AutoencoderKL(
+            block_out_channels=[32, 64],
+            in_channels=3,
+            out_channels=3,
+            down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D"],
+            up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D"],
+            latent_channels=4,
+        )
+        vae.save_pretrained("test_vae")
+
     test_model = LLourney(
         image_dim=64,
         vae_model_id_or_path="test_vae",
